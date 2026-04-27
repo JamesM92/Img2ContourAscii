@@ -232,7 +232,7 @@ def make_gif_examples(name: str, gif_path: str, cols: int = 50,
         png_frames = []
         for i, arr in enumerate(frames_arr):
             text  = render_fn(arr)
-            frame = ascii_to_image(text, title=label if i == 0 else "")
+            frame = ascii_to_image(text, title=label)
             png_frames.append(frame)
             print(f"\r  {label} ... frame {i+1}/{len(frames_arr)}", end="", flush=True)
         print(f"\r  {label} ... saving {out_path.name}", end=" ", flush=True)
