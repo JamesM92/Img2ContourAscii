@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "img2contourascii"
+version = "1.0.1"
+description = "Sub-character ASCII rendering — picks characters by cell SHAPE, not just brightness. Python port of Alex Harri's algorithm."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+authors = [{ name = "JamesM92" }]
+keywords = ["ascii", "ansi", "image", "rendering", "contour", "shape"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Text Processing :: Markup",
+]
+dependencies = [
+    "numpy>=1.24",
+    "Pillow>=10.0",
+    "scipy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/JamesM92/Img2contourascii"
+Issues = "https://github.com/JamesM92/Img2contourascii/issues"
+
+[project.scripts]
+img2contourascii = "img2contourascii:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["img2contourascii*"]
+
+[tool.setuptools.package-data]
+img2contourascii = ["default.json"]

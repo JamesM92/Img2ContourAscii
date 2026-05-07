@@ -66,11 +66,23 @@ The `--color` flag adds ANSI 24-bit colour codes to each character using the ave
 
 ## Installation
 
+The image renderer is installable from this repo as a Python package
+that drops a `img2contourascii` console command on your `PATH` and
+exposes `Renderer` / `convert()` for use as a library.
+
 ```bash
-pip install pillow numpy scipy
+# Latest from GitHub
+pip install git+https://github.com/JamesM92/Img2contourascii
+
+# Or, from a local clone
+git clone https://github.com/JamesM92/Img2contourascii
+pip install ./Img2contourascii
 ```
 
-For video / webcam support (separate script, install only what you need):
+`numpy`, `Pillow`, and `scipy` are pulled in automatically.
+
+For video / webcam support (separate script, not part of the
+installed package — install only what you need):
 
 ```bash
 pip install imageio            # GIF and basic formats
@@ -80,11 +92,15 @@ pip install picamera2          # Raspberry Pi Camera Module
 
 ---
 
-## Image rendering — `Img2ContourAscii.py`
+## Image rendering — `img2contourascii` CLI
 
 ```
-python Img2ContourAscii.py <image> [options]
+img2contourascii <image> [options]
 ```
+
+(The legacy invocation `python Img2ContourAscii.py <image> [options]`
+still works — it's a one-line shim that calls into the installed
+package, kept for backwards compatibility with existing scripts.)
 
 | Option | Default | Description |
 |---|---|---|
@@ -102,16 +118,16 @@ python Img2ContourAscii.py <image> [options]
 
 ```bash
 # Basic render to terminal
-python Img2ContourAscii.py photo.jpg
+img2contourascii photo.jpg
 
 # Wider, colour, saved to file
-python Img2ContourAscii.py photo.jpg --cols 120 --color -o
+img2contourascii photo.jpg --cols 120 --color -o
 
 # Photo-friendly (dark areas become dense)
-python Img2ContourAscii.py photo.jpg --invert --autocontrast
+img2contourascii photo.jpg --invert --autocontrast
 
 # Higher contrast
-python Img2ContourAscii.py photo.jpg --global-crunch 3.0 --directional-crunch 3.5
+img2contourascii photo.jpg --global-crunch 3.0 --directional-crunch 3.5
 ```
 
 ### Python API
@@ -119,7 +135,7 @@ python Img2ContourAscii.py photo.jpg --global-crunch 3.0 --directional-crunch 3.
 `Renderer` and the `convert()` shorthand can be imported directly for use in other scripts:
 
 ```python
-from Img2ContourAscii import Renderer, convert
+from img2contourascii import Renderer, convert
 
 # One-shot helper — opens the image, renders, returns a string
 text = convert("photo.jpg", cols=80, use_color=True, autocontrast=True)

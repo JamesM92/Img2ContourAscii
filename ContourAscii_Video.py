@@ -21,7 +21,7 @@ import time
 
 import numpy as np
 
-from Img2ContourAscii import CELL_ASPECT, Renderer
+from img2contourascii import CELL_ASPECT, Renderer
 
 # ANSI helpers
 _CLEAR = "\033[2J\033[H"   # clear screen + move to top-left (first frame)
