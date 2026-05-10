@@ -62,6 +62,16 @@ Sampling is fully vectorised with numpy — no Python pixel loops. Results are c
 
 The `--color` flag adds ANSI 24-bit colour codes to each character using the average colour of the corresponding image region.
 
+### Palette quantisation (1.1+)
+
+The `--palette-size N` flag (which implies `--color`) builds a per-image palette of *N* colours via PIL's median-cut algorithm and snaps every cell's colour to its nearest palette entry. The output then contains at most *N* unique colours, picked to fit the image's actual content.
+
+This is useful when the output is being fed into a downstream renderer that pays per colour change — e.g. terminal protocols that emit a fresh escape sequence on every cell — or when you simply want a stylised low-palette look. Adjacent cells frequently land on the same palette entry, which collapses long colour-escape runs.
+
+`--hysteresis F` (default `0.0`) layers a sticky-colour bias on top of the palette quantisation. After nearest-palette assignment, a left-to-right per-row pass swaps each cell's colour to the *previous* cell's colour when that previous palette entry is within `(1 + F)` of the nearest entry's distance. Higher values produce longer runs of identical colour at the cost of slightly less faithful per-cell hue. `0.5` is a reasonable starting point for natural photographs; `0.0` disables the bias entirely.
+
+When `--palette-size` is omitted (or `0`), colour output is identical to v1.0 — the original 16-step quantisation + saturation boost — so existing callers continue to work unchanged.
+
 ---
 
 ## Installation
@@ -108,11 +118,15 @@ package, kept for backwards compatibility with existing scripts.)
 | `--global-crunch F` | `2.2` | Global contrast exponent |
 | `--directional-crunch F` | `2.8` | Directional contrast exponent |
 | `--color` | off | ANSI 24-bit colour output |
+| `--palette-size N` *(1.1+)* | unset | Limit colour output to *N* image-adaptive palette entries (median-cut). Implies `--color`. |
+| `--hysteresis F` *(1.1+)* | `0.0` | When `--palette-size` is set, bias adjacent cells toward the same palette entry. `0.5` is a good starting point for photos. |
 | `--invert` | off | Invert lightness (bright→sparse, dark→dense — useful for photos) |
 | `--autocontrast` | off | Stretch luminance range to [0, 1] before rendering |
 | `--char-ratio F` | `1.3333` | Cell height/width ratio — tune if output looks squished |
 | `--exclude CHARS` | `""` | Characters to never use, e.g. `--exclude "\|$"` |
 | `-o [FILE]` | stdout | Write to file; omit filename to auto-generate |
+
+> **Backwards compatibility:** every existing flag still defaults to its v1.0 behaviour. Omit `--palette-size` and the colour pipeline is byte-for-byte identical to earlier releases. The new options are purely additive.
 
 ### Examples
 
@@ -128,6 +142,11 @@ img2contourascii photo.jpg --invert --autocontrast
 
 # Higher contrast
 img2contourascii photo.jpg --global-crunch 3.0 --directional-crunch 3.5
+
+# Stylised low-palette render — 16 image-adaptive colours, sticky
+# enough that adjacent cells often share a colour. Smaller output
+# bytes when fed through a downstream renderer.
+img2contourascii photo.jpg --palette-size 16 --hysteresis 0.5
 ```
 
 ### Python API
@@ -147,6 +166,15 @@ from PIL import Image
 renderer = Renderer(cols=120, use_color=True, autocontrast=True)
 img_arr  = np.array(Image.open("photo.jpg").convert("RGB"), dtype=np.float32)
 text     = renderer.render_frame(img_arr)
+
+# Low-palette render via the Renderer constructor (1.1+)
+renderer = Renderer(
+    cols         = 80,
+    use_color    = True,
+    palette_size = 16,    # adaptive 16-colour palette
+    hysteresis   = 0.5,   # sticky-colour bias, longer runs
+)
+text = renderer.render_frame(img_arr)
 ```
 
 ---

@@ -232,6 +232,8 @@ class Renderer:
         char_aspect:       float = CELL_ASPECT,
         exclude:           str   = "",
         autocontrast:      bool  = False,
+        palette_size:      int   = None,    # 0 / None = no palette limit
+        hysteresis:        float = 0.0,     # 0.0 = strict nearest
     ):
         if cols is None:
             cols = shutil.get_terminal_size(fallback=(80, 24)).columns
@@ -242,6 +244,20 @@ class Renderer:
         self.invert          = invert
         self.char_aspect     = char_aspect
         self.autocontrast    = autocontrast
+        # Optional adaptive-palette mode for colour output. When set,
+        # PIL's median-cut picks `palette_size` colours tailored to
+        # this image; every cell colour is then snapped to its nearest
+        # palette entry. Drastically reduces unique colours in the
+        # output (= fewer colour escapes downstream) at the cost of
+        # less faithful per-cell hue.
+        self.palette_size    = palette_size if palette_size and palette_size > 0 else None
+        # Sticky-colour bias for palette mode. After nearest-palette
+        # assignment, a cell whose colour differs from the previous
+        # cell only marginally inherits the previous colour. The
+        # threshold is `hysteresis` * (max possible RGB distance);
+        # 0.0 disables the bias, 0.15 - 0.25 typically halves the
+        # number of colour transitions per row on photographs.
+        self.hysteresis      = max(0.0, min(1.0, float(hysteresis)))
 
         chars, vecs  = _load_char_vectors(exclude)
         self.chars   = np.array(chars)
@@ -257,6 +273,67 @@ class Renderer:
         if key not in self._mask_cache:
             self._mask_cache[key] = _build_masks(cell_w, cell_h)
         return self._mask_cache[key]
+
+    # ------------------------------------------------------------------
+
+    def _palette_quantise(self,
+                              img_arr:    np.ndarray,
+                              color_grid: np.ndarray) -> np.ndarray:
+        """Snap each cell colour in `color_grid` to the nearest entry
+        of an image-adaptive palette of `self.palette_size` colours.
+
+        The palette is derived from `img_arr` via PIL's median cut,
+        so common colours in the source map cleanly to dedicated
+        palette entries while rare colours fold into nearby ones.
+        Returns a (rows, cols, 3) uint8 array suitable for the
+        existing colour-output formatter.
+
+        When `self.hysteresis > 0`, a left-to-right per-row pass
+        biases towards the previous cell's colour: a cell inherits
+        the previous colour when the previous palette entry is
+        within `(1 + hysteresis)` of the nearest entry's distance.
+        That collapses adjacent cells onto the same palette entry
+        far more often, which is what reduces the colour-escape
+        count downstream."""
+        rows, cols = color_grid.shape[:2]
+
+        # Build the palette. Quantize() needs uint8 input.
+        src_uint8 = img_arr.astype(np.uint8)
+        pil_img   = Image.fromarray(src_uint8, mode="RGB")
+        pal_img   = pil_img.quantize(colors=self.palette_size,
+                                          method=Image.Quantize.MEDIANCUT)
+        flat_pal  = pal_img.getpalette()[:self.palette_size * 3]
+        palette   = np.array(flat_pal, dtype=np.float32).reshape(-1, 3)
+        # PIL pads the palette to 256 entries with zeros; trim any
+        # palette rows that are pure-zero AND not actually used so
+        # we don't bias every dark cell onto a bogus extra "black".
+        used = set(np.unique(np.array(pal_img)))
+        keep = np.array([i in used for i in range(palette.shape[0])])
+        if keep.any():
+            palette = palette[keep]
+
+        # Vectorised nearest-palette assignment.
+        diff      = color_grid[:, :, np.newaxis, :] - palette[np.newaxis, np.newaxis, :, :]
+        dist_sq   = np.sum(diff * diff, axis=3)         # (rows, cols, P)
+        nearest_i = np.argmin(dist_sq, axis=2)          # (rows, cols)
+
+        # Hysteresis: left-to-right per row, swap to previous if it
+        # was within (1 + h)^2 of the nearest distance. Loop is over
+        # rows*cols which is tiny vs the per-pixel work above.
+        if self.hysteresis > 0.0:
+            slack = (1.0 + self.hysteresis) ** 2
+            for r in range(rows):
+                for c in range(1, cols):
+                    prev_i = nearest_i[r, c - 1]
+                    cur_i  = nearest_i[r, c]
+                    if prev_i == cur_i:
+                        continue
+                    d_cur  = dist_sq[r, c, cur_i]
+                    d_prev = dist_sq[r, c, prev_i]
+                    if d_prev <= d_cur * slack:
+                        nearest_i[r, c] = prev_i
+
+        return palette[nearest_i].astype(np.uint8)
 
     # ------------------------------------------------------------------
 
@@ -321,14 +398,27 @@ class Renderer:
         # img_arr[py, px] → (rows, ch_int, cols, cw_int, 3)
         color_grid = img_arr[py, px].mean(axis=(1, 3))  # (rows, cols, 3)
 
-        # Quantise to 16-level steps then saturate-boost (brightest channel → 255).
-        # Only boost cells where the max channel is ≥ 48; darker cells are treated
-        # as black so near-black backgrounds with a faint hue don't become vivid.
-        rgb_q = (color_grid // 16) * 16
-        mx    = rgb_q.max(axis=2, keepdims=True)                    # (rows, cols, 1)
-        safe  = np.where(mx >= 48, mx, 1.0)
-        rgb_q = np.where(mx >= 48, np.clip(rgb_q * (255.0 / safe), 0, 255), rgb_q)
-        rgb_q = rgb_q.astype(np.uint8)                              # (rows, cols, 3)
+        if self.palette_size:
+            # Adaptive-palette mode: build a per-image palette via
+            # PIL's median cut, snap each cell's colour to the
+            # nearest palette entry, then optionally apply
+            # hysteresis. Skips the saturation-boost pass — the
+            # palette is already tuned to the image's actual hues
+            # and boosting would push entries apart again.
+            rgb_q = self._palette_quantise(img_arr, color_grid)
+        else:
+            # Original behaviour: quantise to 16-level steps per
+            # channel, then saturate-boost (brightest channel →
+            # 255). Only boost cells where the max channel is ≥ 48;
+            # darker cells stay near-black so faint hues in deep
+            # shadow don't get amplified into vivid noise.
+            rgb_q = (color_grid // 16) * 16
+            mx    = rgb_q.max(axis=2, keepdims=True)
+            safe  = np.where(mx >= 48, mx, 1.0)
+            rgb_q = np.where(mx >= 48,
+                                np.clip(rgb_q * (255.0 / safe), 0, 255),
+                                rgb_q)
+            rgb_q = rgb_q.astype(np.uint8)
 
         # String formatting — unavoidably a Python loop, but the expensive
         # per-cell mean() is gone; this is now just indexing + f-string work.
@@ -392,17 +482,38 @@ def main():
         "--exclude", default="",
         help='characters to never use, e.g. --exclude "|$\\\\"',
     )
+    parser.add_argument(
+        "--palette-size", dest="palette_size", type=int, default=None,
+        help="limit colour output to N image-adaptive palette entries "
+             "(median-cut). Implies --color. Use to cut bytes when "
+             "feeding the output through a downstream renderer that "
+             "pays per colour change.",
+    )
+    parser.add_argument(
+        "--hysteresis", dest="hysteresis", type=float, default=0.0,
+        help="when --palette-size is set, bias adjacent cells toward "
+             "the same palette entry. 0.0 = strict nearest, "
+             "0.15-0.25 typical. Higher = more colour runs, less "
+             "faithful per-cell hue.",
+    )
     args = parser.parse_args()
+
+    # --palette-size implies colour output (no point quantising
+    # when we're not emitting colour).
+    use_color = args.color or (args.palette_size is not None
+                                   and args.palette_size > 0)
 
     renderer = Renderer(
         cols            = args.cols,
         global_exp      = args.global_exp,
         directional_exp = args.directional_exp,
-        use_color       = args.color,
+        use_color       = use_color,
         invert          = args.invert,
         char_aspect     = args.char_aspect,
         exclude         = args.exclude,
         autocontrast    = args.autocontrast,
+        palette_size    = args.palette_size,
+        hysteresis      = args.hysteresis,
     )
 
     img_arr = np.array(Image.open(args.image).convert("RGB"), dtype=np.float32)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "img2contourascii"
-version = "1.0.1"
+version = "1.1.0"
 description = "Sub-character ASCII rendering — picks characters by cell SHAPE, not just brightness. Python port of Alex Harri's algorithm."
 readme = "README.md"
 license = { file = "LICENSE" }
